@@ -24,6 +24,11 @@ go.work.sum
 # env file
 .env
 
+# Parquet files
 *.parquet
 
+# Vscode debug artifacts
+__debug_bin*
+
+# Mac files
 .DS_Store
