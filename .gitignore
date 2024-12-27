@@ -32,3 +32,9 @@ __debug_bin*
 
 # Mac files
 .DS_Store
+
+# AWS SAM
+.aws-sam
+
+# Local lambda
+output.json
