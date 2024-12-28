@@ -2,19 +2,19 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/xitongsys/parquet-go-source/s3v2"
-	"github.com/xitongsys/parquet-go/reader"
+	"github.com/marcboeker/go-duckdb"
 )
+
+const batchSize = 1000
 
 type publishRecordsRequest struct {
 	Bucket string   `json:"bucket"`
@@ -25,10 +25,6 @@ type publishRecordsResponse struct {
 	Paths []string `json:"paths"`
 }
 
-const (
-	batchSize = 100
-)
-
 func main() {
 	if err := run(context.Background(), os.Stdout, os.Getenv); err != nil {
 		fmt.Fprintf(os.Stderr, "%v", err)
@@ -36,67 +32,89 @@ func main() {
 	}
 }
 
-func withEndpointOverride() func(*s3.Options) {
-	return func(o *s3.Options) {
-		o.BaseEndpoint = aws.String("http://s3.localhost.localstack.cloud:4566")
-	}
-}
-
 func run(ctx context.Context, stdout io.Writer, getenv func(string) string) error {
-	cfg, err := config.LoadDefaultConfig(ctx)
+	connector, err := duckdb.NewConnector("", func(execer driver.ExecerContext) error {
+		bootQueries := []string{
+			`SET s3_endpoint='s3.localhost.localstack.cloud:4566';`,
+			`SET s3_access_key_id='test';`,
+			`SET s3_secret_access_key='test';`,
+			`SET s3_region='us-east-1';`,
+		}
+
+		for _, query := range bootQueries {
+			if _, err := execer.ExecContext(ctx, query, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
 	if err != nil {
-		return fmt.Errorf("unable to load SDK config, %w", err)
+		return fmt.Errorf("failed to open duckdb: %w", err)
 	}
 
-	s3Client := s3.NewFromConfig(cfg, withEndpointOverride())
-	sqsClient := sqs.NewFromConfig(cfg)
+	db := sql.OpenDB(connector)
 
-	queueURL := getenv("QUEUE_URL")
-	if queueURL == "" {
-		return fmt.Errorf("QUEUE_URL environment variable is required")
-	}
+	// TODO: fix this as a deferred statement will not run in a lambda function
+	defer connector.Close()
+	defer db.Close()
 
 	logger := slog.New(slog.NewJSONHandler(stdout, nil))
 
-	handler := handlePublishRecords(logger, s3Client, sqsClient, queueURL)
+	handler := handlePublishRecords(logger, db)
 	lambda.Start(handler)
 	return nil
 }
 
-func handlePublishRecords(logger *slog.Logger, s3Client *s3.Client, sqsClient *sqs.Client, queueURL string) func(context.Context, publishRecordsRequest) (publishRecordsResponse, error) {
+func handlePublishRecords(logger *slog.Logger, db *sql.DB) func(context.Context, publishRecordsRequest) (publishRecordsResponse, error) {
 	return func(ctx context.Context, req publishRecordsRequest) (publishRecordsResponse, error) {
+		ctx, cancel := context.WithDeadline(ctx, time.Now().Add(10*time.Minute))
+		defer cancel()
+
 		for _, path := range req.Paths {
-			// Open the Parquet file
-			fr, err := s3v2.NewS3FileReaderWithClient(ctx, s3Client, req.Bucket, path)
-			if err != nil {
-				return publishRecordsResponse{}, fmt.Errorf("failed to create s3 parquet reader: %w", err)
-			}
-			defer fr.Close()
+			s3Path := fmt.Sprintf("s3://%s/%s", req.Bucket, path)
 
-			pr, err := reader.NewParquetReader(fr, nil, 1)
-			if err != nil {
-				return publishRecordsResponse{}, fmt.Errorf("failed to create parquet reader: %w", err)
-			}
+			offset := 0
+			totalRows := 0
 
-			var (
-				readRows  int64 = 0
-				numRows   int64 = pr.GetNumRows()
-				batchSize int   = 20
-			)
+			for {
+				query := fmt.Sprintf(`
+					SELECT *
+					FROM '%s'
+					LIMIT %d OFFSET %d
+				`, s3Path, batchSize, offset)
 
-			for readRows < numRows {
-				_, err := pr.ReadByNumber(batchSize)
+				rows, err := db.QueryContext(ctx, query)
 				if err != nil {
-					if err == io.EOF {
-						break
-					}
-					return publishRecordsResponse{}, fmt.Errorf("failed to read rows: %w", err)
+					return publishRecordsResponse{}, fmt.Errorf("failed to execute query: %w", err)
 				}
-				readRows += int64(batchSize)
 
-				fmt.Fprintf(os.Stdout, "\r Reading %d/%d rows", readRows, numRows)
+				rowCount := 0
+				// Iterate over the rows in the current chunk
+				for rows.Next() {
+					rowCount++
+				}
+
+				if err := rows.Err(); err != nil {
+					rows.Close() // Close immediately if there's a row iteration error
+					return publishRecordsResponse{}, fmt.Errorf("row iteration error: %w", err)
+				}
+
+				if rowCount == 0 {
+					break
+				}
+
+				totalRows += rowCount
+				offset += batchSize
+
+				logger.InfoContext(
+					ctx,
+					"processed batch",
+					slog.Int("count", rowCount),
+					slog.Int("offset", offset))
 			}
 
+			logger.InfoContext(ctx, "processed file", "path", path, "count", totalRows)
 		}
 
 		return publishRecordsResponse{
