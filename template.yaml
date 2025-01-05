@@ -6,40 +6,45 @@ Resources:
   ParquetDataQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: parquet-data-queue
+      QueueName: !Sub "parquet-data-queue-${AWS::StackName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ParquetDataDeadLetterQueue.Arn
         maxReceiveCount: 5
   ParquetDataDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: parquet-data-deadletter
+      QueueName: !Sub "parquet-data-deadletter-${AWS::StackName}"
 
-  ParquetRecordPublisherFunction:
+  DuckDBRecordProcessorFunction:
     Type: AWS::Serverless::Function
     Metadata:
       BuildMethod: go1.x
     Properties:
-      FunctionName: parquet-record-publisher
+      FunctionName: !Sub "duckdb-record-processor-${AWS::StackName}"
       Handler: bootstrap
       Runtime: provided.al2023
-      CodeUri: cmd/record-publisher
+      CodeUri: cmd/duckdb-record-processor
       Environment:
         Variables:
           QUEUE_URL: !Ref ParquetDataQueue
       Policies:
         - SQSSendMessagePolicy:
             QueueName: !GetAtt ParquetDataQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "arn:aws:s3:::${ParquetDataBucket}/*"
 
-  ParquetRecordConsumerFunction:
+  SQSRecordConsumerFunction:
     Type: AWS::Serverless::Function
     Metadata:
       BuildMethod: go1.x
     Properties:
-      FunctionName: parquet-record-consumer
+      FunctionName: !Sub "sqs-record-consumer-${AWS::StackName}"
       Handler: bootstrap
       Runtime: provided.al2023
-      CodeUri: cmd/record-consumer
+      CodeUri: cmd/sqs-record-consumer
     Policies:
       - SQSPollerPolicy:
           QueueName: !GetAtt ParquetDataQueue.QueueName
@@ -48,3 +53,8 @@ Resources:
         Type: SQS
         Properties:
           Queue: !GetAtt ParquetDataQueue.Arn
+
+  ParquetDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "parquet-data-bucket-${AWS::StackName}"
