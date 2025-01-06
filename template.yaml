@@ -18,18 +18,15 @@ Resources:
   DuckDBRecordProcessorFunction:
     Type: AWS::Serverless::Function
     Metadata:
-      BuildMethod: go1.x
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "duckdb-record-processor-${AWS::StackName}"
       Handler: bootstrap
       Runtime: provided.al2023
-      CodeUri: cmd/duckdb-record-processor
-      Environment:
-        Variables:
-          QUEUE_URL: !Ref ParquetDataQueue
+      CodeUri: .
+      Architectures:
+        - arm64
       Policies:
-        - SQSSendMessagePolicy:
-            QueueName: !GetAtt ParquetDataQueue.QueueName
         - Statement:
             - Effect: Allow
               Action:
@@ -39,12 +36,14 @@ Resources:
   SQSRecordConsumerFunction:
     Type: AWS::Serverless::Function
     Metadata:
-      BuildMethod: go1.x
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "sqs-record-consumer-${AWS::StackName}"
       Handler: bootstrap
       Runtime: provided.al2023
-      CodeUri: cmd/sqs-record-consumer
+      CodeUri: .
+      Architectures:
+        - arm64
     Policies:
       - SQSPollerPolicy:
           QueueName: !GetAtt ParquetDataQueue.QueueName
