@@ -15,15 +15,40 @@ Resources:
     Properties:
       QueueName: !Sub "parquet-data-deadletter-${AWS::StackName}"
 
-  DuckDBRecordProcessorFunction:
+  # Using DuckDB with AWS is proving to be extremely difficult as there are
+  # cross compilation issues getting the DuckDB library working in a linux
+  # environment.
+  # DuckDBRecordProcessorFunction:
+  #   Type: AWS::Serverless::Function
+  #   Metadata:
+  #     BuildMethod: makefile
+  #   Properties:
+  #     FunctionName: !Sub "duckdb-record-processor-${AWS::StackName}"
+  #     Handler: bootstrap
+  #     Runtime: provided.al2
+  #     CodeUri: .
+  #     Architectures:
+  #       - arm64
+  #     Policies:
+  #       - Statement:
+  #           - Effect: Allow
+  #             Action:
+  #               - s3:GetObject
+  #             Resource: !Sub "arn:aws:s3:::${ParquetDataBucket}/*"
+
+  ParquetGoRecordProcessorFunction:
     Type: AWS::Serverless::Function
     Metadata:
-      BuildMethod: makefile
+      BuildMethod: go1.x
     Properties:
-      FunctionName: !Sub "duckdb-record-processor-${AWS::StackName}"
+      FunctionName: !Sub "parquetgo-record-processor-${AWS::StackName}"
       Handler: bootstrap
-      Runtime: provided.al2023
-      CodeUri: .
+      Runtime: provided.al2
+      CodeUri: cmd/parquetgo-record-processor
+      Timeout: 120
+      Environment:
+        Variables:
+          QUEUE_URL: !Ref ParquetDataQueue
       Architectures:
         - arm64
       Policies:
@@ -32,16 +57,21 @@ Resources:
               Action:
                 - s3:GetObject
               Resource: !Sub "arn:aws:s3:::${ParquetDataBucket}/*"
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+                - sqs:SendMessageBatch
+              Resource: !GetAtt ParquetDataQueue.Arn
 
   SQSRecordConsumerFunction:
     Type: AWS::Serverless::Function
     Metadata:
-      BuildMethod: makefile
+      BuildMethod: go1.x
     Properties:
       FunctionName: !Sub "sqs-record-consumer-${AWS::StackName}"
       Handler: bootstrap
-      Runtime: provided.al2023
-      CodeUri: .
+      Runtime: provided.al2
+      CodeUri: cmd/sqs-record-consumer
       Architectures:
         - arm64
     Policies:
