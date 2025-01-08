@@ -1,4 +1,0 @@
-{
-  "bucket": "parquet-data",
-  "paths": ["test_data.parquet"]
-}

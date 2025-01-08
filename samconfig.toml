@@ -7,7 +7,7 @@ region = "us-east-1"
 capabilities = "CAPABILITY_IAM"
 image_repositories = []
 
-[local.deploy.parameters]
+[localstack.deploy.parameters]
 stack_name = "poc-parquet-publisher"
 resolve_s3 = true
 s3_prefix = "poc-parquet-publisher"

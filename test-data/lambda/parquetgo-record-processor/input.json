@@ -1,0 +1,4 @@
+{
+  "bucket": "parquet-data-bucket-poc-parquet-publisher",
+  "paths": ["test_data.parquet"]
+}

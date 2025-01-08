@@ -1,0 +1,83 @@
+version: "3"
+
+vars:
+  PROFILE: '{{.PROFILE | default "localstack"}}'
+  CONFIG_ENV: '{{.CONFIG_ENV | default "localstack"}}'
+  STACK_NAME: "poc-parquet-publisher"
+  BUCKET_NAME: "parquet-data-bucket-poc-parquet-publisher"
+
+tasks:
+  build:
+    desc: Build the SAM application
+    cmds:
+      - sam build --config-env {{.CONFIG_ENV}}
+
+  deploy:
+    desc: Deploy the SAM application
+    cmds:
+      - task: build
+      - task: validate
+      - sam deploy --config-env {{.CONFIG_ENV}}
+
+  validate:
+    desc: Validate and lint the SAM template
+    cmds:
+      - sam validate --config-env {{.CONFIG_ENV}} --lint
+
+  test:
+    desc: Run Go tests
+    dir: cmd/parquetgo-record-processor
+    cmds:
+      - go test -v ./...
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf .aws-sam
+      - rm -rf samconfig.toml
+
+  seed:
+    desc: Upload test data
+    cmds:
+      - aws s3 cp ./cmd/create-test-data/test_data.parquet s3://{{.BUCKET_NAME}}/test_data.parquet --profile {{.PROFILE}}
+
+  invoke:lambda:
+    desc: Invoke a Lambda function with optional payload
+    internal: true
+    vars:
+      PAYLOAD_PATH: '{{.PAYLOAD_PATH | default ""}}'
+      FUNCTION_NAME: "{{.FUNCTION_NAME}}"
+    cmds:
+      - |
+        if [ -n "{{.PAYLOAD_PATH}}" ]; then
+          aws lambda invoke --function-name {{.FUNCTION_NAME}} --payload fileb://{{.PAYLOAD_PATH}} --profile {{.PROFILE}} response.json | jq '.'
+        else
+          aws lambda invoke --function-name {{.FUNCTION_NAME}} --profile {{.PROFILE}} response.json | jq '.'
+        fi
+      - cat response.json | jq '.'
+      - rm response.json
+
+  invoke:lambda:parquetgo-record-processor:
+    desc: Invoke the parquetgo-record-processor Lambda function
+    vars:
+      PAYLOAD_PATH: '{{.PAYLOAD_PATH | default "./test-data/lambda/parquetgo-record-processor/input.json"}}'
+    cmds:
+      - task: invoke:lambda
+        vars:
+          FUNCTION_NAME: "parquetgo-record-processor-{{.STACK_NAME}}"
+          PAYLOAD_PATH: "{{.PAYLOAD_PATH}}"
+
+  logs:lambda:
+    desc: Tail logs for a Lambda function
+    internal: true
+    vars:
+      FUNCTION_NAME: "{{.FUNCTION_NAME}}"
+    cmds:
+      - aws logs tail --follow --profile {{.PROFILE}} /aws/lambda/{{.FUNCTION_NAME}}
+
+  logs:lambda:parquetgo-record-processor:
+    desc: Tail logs for the parquetgo-record-processor function
+    cmds:
+      - task: logs:lambda
+        vars:
+          FUNCTION_NAME: "parquetgo-record-processor-{{.STACK_NAME}}"
