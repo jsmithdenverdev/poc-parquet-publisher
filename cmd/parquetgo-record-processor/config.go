@@ -11,6 +11,9 @@ type config struct {
 	// SQSBatchSize is the number of records to publish in a single SQS message
 	SQSBatchSize int `env:"SQS_BATCH_SIZE"`
 
+	// RowsPerBatch is the number of rows to read from parquet file in a single batch
+	RowsPerBatch int `env:"ROWS_PER_BATCH"`
+
 	// RowsPerWorker is the number of rows to process per worker
 	RowsPerWorker int `env:"ROWS_PER_WORKER"`
 

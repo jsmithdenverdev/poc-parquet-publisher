@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: "2010-09-09"
+AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: AWS SAM template for poc-parquet-publisher.
 
@@ -6,14 +6,14 @@ Resources:
   ParquetDataQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "parquet-data-queue-${AWS::StackName}"
+      QueueName: !Sub parquet-data-queue-${AWS::StackName}
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ParquetDataDeadLetterQueue.Arn
         maxReceiveCount: 5
   ParquetDataDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "parquet-data-deadletter-${AWS::StackName}"
+      QueueName: !Sub parquet-data-deadletter-${AWS::StackName}
 
   # Using DuckDB with AWS is proving to be extremely difficult as there are
   # cross compilation issues getting the DuckDB library working in a linux
@@ -41,14 +41,16 @@ Resources:
     Metadata:
       BuildMethod: go1.x
     Properties:
-      FunctionName: !Sub "parquetgo-record-processor-${AWS::StackName}"
+      FunctionName: !Sub parquetgo-record-processor-${AWS::StackName}
       Handler: bootstrap
       Runtime: provided.al2
       CodeUri: cmd/parquetgo-record-processor
-      Timeout: 120
+      Timeout: 900
+      MemorySize: 512
       Environment:
         Variables:
           QUEUE_URL: !Ref ParquetDataQueue
+          ROWS_PER_BATCH: 500
       Architectures:
         - arm64
       Policies:
@@ -56,7 +58,7 @@ Resources:
             - Effect: Allow
               Action:
                 - s3:GetObject
-              Resource: !Sub "arn:aws:s3:::${ParquetDataBucket}/*"
+              Resource: !Sub arn:aws:s3:::${ParquetDataBucket}/*
             - Effect: Allow
               Action:
                 - sqs:SendMessage
@@ -68,22 +70,22 @@ Resources:
     Metadata:
       BuildMethod: go1.x
     Properties:
-      FunctionName: !Sub "sqs-record-consumer-${AWS::StackName}"
+      FunctionName: !Sub sqs-record-consumer-${AWS::StackName}
       Handler: bootstrap
       Runtime: provided.al2
       CodeUri: cmd/sqs-record-consumer
       Architectures:
         - arm64
-    Policies:
-      - SQSPollerPolicy:
-          QueueName: !GetAtt ParquetDataQueue.QueueName
-    Events:
-      ParquetDataQueue:
-        Type: SQS
-        Properties:
-          Queue: !GetAtt ParquetDataQueue.Arn
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt ParquetDataQueue.QueueName
+      Events:
+        ParquetDataQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ParquetDataQueue.Arn
 
   ParquetDataBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "parquet-data-bucket-${AWS::StackName}"
+      BucketName: !Sub parquet-data-bucket-${AWS::StackName}
